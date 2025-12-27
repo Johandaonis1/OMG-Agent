@@ -60,8 +60,25 @@ class ActionParser:
         "Call_API": ActionType.NOTE,
     }
 
+    # Legacy function-call style (non-official, kept for robustness / backward compatibility)
+    _LEGACY_ACTION_NAMES: tuple[str, ...] = (
+        "CLICK",
+        "DOUBLE_TAP",
+        "LONG_PRESS",
+        "SWIPE",
+        "TYPE",
+        "BACK",
+        "HOME",
+        "LAUNCH",
+        "WAIT",
+        "INFO",
+        "COMPLETE",
+        "ABORT",
+        "TAKE_OVER",
+    )
+
     @classmethod
-    def parse(cls, response: str) -> Action:
+    def parse(cls, response: str) -> Action | None:
         """
         Parse LLM response to Action.
 
@@ -69,31 +86,59 @@ class ActionParser:
         """
         response = response.strip()
 
+        # Extract thinking from <think>/<THINK> tags first
+        thinking = ""
+        action_content = response
+
+        # Handle <think>...</think> tags (AutoGLM format)
+        import re
+        think_match = re.search(r"<[Tt][Hh][Ii][Nn][Kk]>(.*?)</[Tt][Hh][Ii][Nn][Kk]>", response, re.DOTALL)
+        if think_match:
+            thinking = think_match.group(1).strip()
+
+        # Extract content from <answer>...</answer> tags if present (AutoGLM format)
+        answer_match = re.search(r"<[Aa][Nn][Ss][Ww][Ee][Rr]>(.*?)</[Aa][Nn][Ss][Ww][Ee][Rr]>", response, re.DOTALL)
+        if answer_match:
+            action_content = answer_match.group(1).strip()
+        else:
+            # Remove thinking tags from content
+            action_content = re.sub(r"<[Tt][Hh][Ii][Nn][Kk]>.*?</[Tt][Hh][Ii][Nn][Kk]>", "", response, flags=re.DOTALL).strip()
+
         # Try AutoGLM function call format (scan for keywords)
-        if "finish(message=" in response:
-            parts = response.split("finish(message=", 1)
-            thinking = parts[0].strip()
-            # Extract clean function call
-            full_call = cls._extract_balanced_call(response, "finish(message=")
+        if "finish(message=" in action_content:
+            full_call = cls._extract_balanced_call(action_content, "finish(message=")
             if full_call:
                 action = cls._parse_function_call(full_call)
                 if thinking:
                     action.thinking = thinking
                 return action
 
-        if "do(action=" in response:
-            parts = response.split("do(action=", 1)
-            thinking = parts[0].strip()
-            # Extract clean function call
-            full_call = cls._extract_balanced_call(response, "do(action=")
+        if "do(action=" in action_content:
+            full_call = cls._extract_balanced_call(action_content, "do(action=")
             if full_call:
                 action = cls._parse_function_call(full_call)
                 if thinking:
                     action.thinking = thinking
                 return action
 
-        # Default to tab-separated format
-        return cls._parse_tab_format(response)
+        # Legacy format: CLICK(500,300), TYPE("text"), etc.
+        legacy_call = cls._extract_legacy_call(action_content)
+        if legacy_call:
+            action = cls._parse_legacy_call(legacy_call)
+            if action:
+                if thinking:
+                    action.thinking = thinking
+                return action
+
+        # Tab-separated format (gelab-zero / step-gui style)
+        try:
+            action = cls._parse_tab_format(action_content)
+        except ValueError:
+            return None
+
+        if thinking and not action.thinking:
+            action.thinking = thinking
+        return action
 
     @staticmethod
     def _extract_balanced_call(text: str, start_marker: str) -> str | None:
@@ -127,6 +172,121 @@ class ActionParser:
                         return text[start:i+1]
         return None  # Malformed or incomplete
 
+    @staticmethod
+    def _extract_balanced_call_at(text: str, start: int) -> str | None:
+        """Extract balanced function call starting at index `start`."""
+        if start < 0 or start >= len(text):
+            return None
+
+        count = 0
+        in_string = False
+        string_char = None
+        escape = False
+
+        for i, char in enumerate(text[start:], start):
+            if in_string:
+                if escape:
+                    escape = False
+                elif char == "\\":
+                    escape = True
+                elif char == string_char:
+                    in_string = False
+            else:
+                if char in ('"', "'"):
+                    in_string = True
+                    string_char = char
+                elif char == "(":
+                    count += 1
+                elif char == ")":
+                    count -= 1
+                    if count == 0:
+                        return text[start : i + 1]
+        return None
+
+    @classmethod
+    def _extract_legacy_call(cls, text: str) -> str | None:
+        """Extract legacy ACTION(...) call from text (returns last match)."""
+        if not text:
+            return None
+
+        # Prefer the last action call in the text (often the actual output).
+        pattern = r"\b(" + "|".join(map(re.escape, cls._LEGACY_ACTION_NAMES)) + r")\s*\("
+        matches = list(re.finditer(pattern, text, flags=re.IGNORECASE))
+        for m in reversed(matches):
+            call = cls._extract_balanced_call_at(text, m.start())
+            if call:
+                return call.strip()
+        return None
+
+    @classmethod
+    def _parse_legacy_call(cls, call: str) -> Action | None:
+        """Parse legacy ACTION(...) syntax into an Action."""
+        call = call.strip()
+        m = re.match(r"^([A-Za-z_]+)\s*\((.*)\)\s*$", call, flags=re.DOTALL)
+        if not m:
+            return None
+
+        name = m.group(1).strip()
+        args_str = m.group(2).strip()
+
+        # Parse args safely with AST.
+        try:
+            if args_str == "":
+                args = ()
+            else:
+                parsed = ast.literal_eval(f"({args_str})")
+                args = parsed if isinstance(parsed, tuple) else (parsed,)
+        except Exception:
+            return None
+
+        action_name = name.upper()
+        try:
+            action_type = cls._normalize_action_type(action_name)
+        except ValueError:
+            return None
+
+        params: dict[str, Any] = {}
+
+        try:
+            if action_type == ActionType.CLICK:
+                x, y = int(args[0]), int(args[1])
+                params["point"] = [x, y]
+                if len(args) >= 3 and isinstance(args[2], str) and args[2].strip():
+                    params["message"] = args[2]
+            elif action_type == ActionType.DOUBLE_TAP:
+                x, y = int(args[0]), int(args[1])
+                params["point"] = [x, y]
+            elif action_type == ActionType.LONG_PRESS:
+                x, y = int(args[0]), int(args[1])
+                params["point"] = [x, y]
+                if len(args) >= 3:
+                    params["duration"] = args[2]
+            elif action_type == ActionType.SWIPE:
+                x1, y1, x2, y2 = (int(args[0]), int(args[1]), int(args[2]), int(args[3]))
+                params["point1"] = [x1, y1]
+                params["point2"] = [x2, y2]
+            elif action_type == ActionType.TYPE:
+                params["value"] = str(args[0]) if args else ""
+            elif action_type == ActionType.LAUNCH:
+                params["value"] = str(args[0]) if args else ""
+            elif action_type == ActionType.WAIT:
+                params["value"] = args[0] if args else 1
+            elif action_type == ActionType.INFO:
+                params["value"] = str(args[0]) if args else ""
+            elif action_type == ActionType.COMPLETE:
+                if args:
+                    params["return"] = str(args[0])
+            elif action_type == ActionType.ABORT:
+                if args:
+                    params["value"] = str(args[0])
+            elif action_type == ActionType.TAKE_OVER:
+                if args:
+                    params["message"] = str(args[0])
+        except (IndexError, ValueError, TypeError):
+            return None
+
+        return Action(action_type=action_type, params=params)
+
     @classmethod
     def _parse_tab_format(cls, response: str) -> Action:
         """
@@ -134,35 +294,28 @@ class ActionParser:
         <THINK>...</THINK>
         explain:xxx  action:CLICK  point:x,y  summary:xxx
         """
-        # Normalize THINK tags
-        response = cls._normalize_think_tags(response)
+        # Align with gelab-zero `Parser0920Summary.str2action` parsing behavior:
+        # - Normalize THINK tags
+        # - Split key/value pairs strictly by TAB
+        response = cls._normalize_think_tags(response).strip()
 
-        # Extract thinking and key-value parts
-        thinking = ""
-        kv_part = response
+        try:
+            thinking = response.split("<THINK>")[1].split("</THINK>")[0].strip()
+            kv_part = response.split("</THINK>")[1].strip()
+        except IndexError:
+            kv_part = response
+            thinking = ""
 
-        if "<THINK>" in response and "</THINK>" in response:
-            try:
-                thinking = response.split("<THINK>")[1].split("</THINK>")[0].strip()
-                kv_part = response.split("</THINK>")[1].strip()
-            except IndexError:
-                pass
-
-        # Parse key-value pairs
         data = OrderedDict()
         data["thinking"] = thinking
 
-        # Split by tab, handling both tab and multiple spaces
-        kvs = re.split(r'\t+|\s{2,}', kv_part)
-        kvs = [kv.strip() for kv in kvs if kv.strip()]
-
+        kvs = [kv.strip() for kv in kv_part.split("\t") if kv.strip()]
         for kv in kvs:
             if ":" not in kv:
                 continue
 
-            key, value = kv.split(":", 1)
-            key = key.strip().lower()
-            value = value.strip()
+            key = kv.split(":", 1)[0].strip()
+            value = kv.split(":", 1)[1].strip()
 
             if key == "action":
                 data["action_type"] = cls._normalize_action_type(value)
@@ -170,15 +323,10 @@ class ActionParser:
                 data["explanation"] = value
             elif key == "summary":
                 data["summary"] = value
-            elif key in ("point", "point1", "point2"):
+            elif "point" in key:
                 data[key] = cls._parse_point(value)
-            elif key == "direction":
-                data["direction"] = value.upper()
-            elif key == "value":
-                data["value"] = value
-            elif key == "return":
-                data["return"] = value
             else:
+                # Keep other fields (e.g., value/return) as-is; ActionBuilder will map them.
                 data[key] = value
 
         return cls._build_action(data)
@@ -222,7 +370,8 @@ class ActionParser:
                 raise ValueError("Expected function call")
 
             call = tree.body
-            data = {}
+            data: dict[str, Any] = {}
+            duration_value: Any | None = None
 
             for keyword in call.keywords:
                 key = keyword.arg
@@ -241,13 +390,21 @@ class ActionParser:
                 elif key == "app":
                     data["value"] = value
                 elif key == "duration":
-                    data["value"] = value
+                    duration_value = value
                 elif key == "message":
-                    if "action_type" not in data:
-                        data["action_type"] = ActionType.COMPLETE
-                    data["return"] = value
+                    # AutoGLM: do(action="Tap", ..., message="...") uses `message` for sensitive confirmation.
+                    data["message"] = value
                 else:
                     data[key] = value
+
+            if duration_value is not None:
+                action_type = data.get("action_type")
+                if action_type == ActionType.WAIT:
+                    # AutoGLM uses duration="N seconds"; keep both for compatibility.
+                    data["duration"] = duration_value
+                    data["value"] = duration_value
+                else:
+                    data["duration"] = duration_value
 
             return cls._build_action(data)
 
@@ -296,8 +453,19 @@ class ActionParser:
     @classmethod
     def _build_action(cls, data: dict[str, Any]) -> Action:
         """Build Action object from parsed data."""
-        action_type = data.pop("action_type", ActionType.COMPLETE)
-        thinking = data.pop("thinking", data.pop("cot", ""))
+        raw_action_type = data.pop("action_type", None)
+        if raw_action_type is None:
+            raw_action_type = data.pop("action", None)
+
+        if raw_action_type is None:
+            raise ValueError("Missing action type")
+
+        action_type = (
+            raw_action_type
+            if isinstance(raw_action_type, ActionType)
+            else cls._normalize_action_type(str(raw_action_type))
+        )
+        thinking = data.pop("thinking", data.pop("think", data.pop("cot", "")))
         explanation = data.pop("explanation", data.pop("explain", ""))
         summary = data.pop("summary", "")
 

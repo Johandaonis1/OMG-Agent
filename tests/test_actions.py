@@ -17,8 +17,7 @@ class TestActionParser:
 
         assert action is not None
         assert action.action_type == ActionType.CLICK
-        assert action.params["x"] == 500
-        assert action.params["y"] == 300
+        assert action.params["point"] == [500, 300]
 
     def test_parse_click_with_description(self):
         """Test parsing CLICK with description."""
@@ -26,8 +25,7 @@ class TestActionParser:
 
         assert action is not None
         assert action.action_type == ActionType.CLICK
-        assert action.params["x"] == 500
-        assert action.params["y"] == 300
+        assert action.params["point"] == [500, 300]
 
     def test_parse_swipe(self):
         """Test parsing SWIPE action."""
@@ -35,10 +33,8 @@ class TestActionParser:
 
         assert action is not None
         assert action.action_type == ActionType.SWIPE
-        assert action.params["x1"] == 100
-        assert action.params["y1"] == 500
-        assert action.params["x2"] == 100
-        assert action.params["y2"] == 200
+        assert action.params["point1"] == [100, 500]
+        assert action.params["point2"] == [100, 200]
 
     def test_parse_type(self):
         """Test parsing TYPE action."""
@@ -46,7 +42,7 @@ class TestActionParser:
 
         assert action is not None
         assert action.action_type == ActionType.TYPE
-        assert action.params["text"] == "hello world"
+        assert action.params["value"] == "hello world"
 
     def test_parse_type_chinese(self):
         """Test parsing TYPE with Chinese text."""
@@ -54,7 +50,7 @@ class TestActionParser:
 
         assert action is not None
         assert action.action_type == ActionType.TYPE
-        assert action.params["text"] == "你好世界"
+        assert action.params["value"] == "你好世界"
 
     def test_parse_launch(self):
         """Test parsing LAUNCH action."""
@@ -62,7 +58,7 @@ class TestActionParser:
 
         assert action is not None
         assert action.action_type == ActionType.LAUNCH
-        assert action.params["app"] == "微信"
+        assert action.params["value"] == "微信"
 
     def test_parse_back(self):
         """Test parsing BACK action."""
@@ -84,7 +80,7 @@ class TestActionParser:
 
         assert action is not None
         assert action.action_type == ActionType.WAIT
-        assert action.params["seconds"] == 3
+        assert action.params["value"] == 3
 
     def test_parse_complete(self):
         """Test parsing COMPLETE action."""
@@ -92,7 +88,7 @@ class TestActionParser:
 
         assert action is not None
         assert action.action_type == ActionType.COMPLETE
-        assert action.params["message"] == "任务完成"
+        assert action.params["return"] == "任务完成"
 
     def test_parse_invalid_action(self):
         """Test parsing invalid action returns None."""

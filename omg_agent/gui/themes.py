@@ -41,33 +41,77 @@ class ThemeColors:
 
 # 主题定义
 THEMES: Dict[ThemeName, ThemeColors] = {
+    # === Premium Themes ===
+    "nebula": ThemeColors(
+        main_bg="#0F172A",      # Slate 900 (Deep Blue/Black)
+        panel_bg="#1E293B",     # Slate 800
+        input_bg="#0F172A",
+        border="#334155",       # Slate 700
+        text="#F1F5F9",         # Slate 100
+        text_secondary="#94A3B8", # Slate 400
+        accent="#818CF8",       # Indigo 400
+        success="#34D399",      # Emerald 400
+        danger="#F87171",       # Red 400
+        warning="#FBBF24",      # Amber 400
+        button_bg="#334155",
+        button_hover="#475569",
+    ),
+    "ceramic": ThemeColors(
+        main_bg="#FAFAFA",      # Zinc 50
+        panel_bg="#FFFFFF",     # White
+        input_bg="#F4F4F5",     # Zinc 100
+        border="#E4E4E7",       # Zinc 200
+        text="#18181B",         # Zinc 900
+        text_secondary="#71717A", # Zinc 500
+        accent="#2563EB",       # Blue 600
+        success="#059669",      # Emerald 600
+        danger="#DC2626",       # Red 600
+        warning="#D97706",      # Amber 600
+        button_bg="#F4F4F5",
+        button_hover="#E4E4E7",
+    ),
+    "sunset": ThemeColors(
+        main_bg="#2a1b2e",      # Deep Purple/Brown
+        panel_bg="#462a42",     
+        input_bg="#2a1b2e",
+        border="#663e5b",
+        text="#ffd6e0",
+        text_secondary="#d4a3b1",
+        accent="#ff7b9c",       # Pink
+        success="#98c379",
+        danger="#e06c75",
+        warning="#e5c07b",
+        button_bg="#462a42",
+        button_hover="#663e5b",
+    ),
+    # Keep legacy for compatibility but map them to new ones if needed, or refine them
     "dark": ThemeColors(
-        main_bg="#0d1117",
-        panel_bg="#161b22",
-        input_bg="#0d1117",
-        border="#30363d",
-        text="#c9d1d9",
-        text_secondary="#8b949e",
-        accent="#58a6ff",
-        success="#3fb950",
-        danger="#f85149",
-        warning="#d29922",
-        button_bg="#21262d",
-        button_hover="#30363d",
+        main_bg="#121212",
+        panel_bg="#1E1E1E",
+        input_bg="#252525",
+        border="#333333",
+        text="#E0E0E0",
+        text_secondary="#A0A0A0",
+        accent="#BB86FC",
+        success="#03DAC6",
+        danger="#CF6679",
+        warning="#FFB74D",
+        button_bg="#2C2C2C",
+        button_hover="#3D3D3D",
     ),
     "light": ThemeColors(
-        main_bg="#ffffff",
-        panel_bg="#f6f8fa",
-        input_bg="#ffffff",
-        border="#d0d7de",
-        text="#24292f",
-        text_secondary="#57606a",
-        accent="#0969da",
-        success="#1a7f37",
-        danger="#cf222e",
-        warning="#9a6700",
-        button_bg="#f6f8fa",
-        button_hover="#eaeef2",
+        main_bg="#FFFFFF",
+        panel_bg="#F3F4F6",
+        input_bg="#FFFFFF",
+        border="#E5E7EB",
+        text="#111827",
+        text_secondary="#6B7280",
+        accent="#3B82F6",
+        success="#10B981",
+        danger="#EF4444",
+        warning="#F59E0B",
+        button_bg="#F3F4F6",
+        button_hover="#E5E7EB",
     ),
 }
 

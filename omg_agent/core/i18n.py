@@ -146,7 +146,14 @@ class Strings:
     log_task_paused: str
     log_task_resumed: str
     
-
+    # Modern UI 界面
+    switch_to_classic_ui: str
+    switch_layout_direction: str
+    new_session: str
+    thinking_process: str
+    switch_to_modern_ui: str  # 经典界面->Modern UI切换
+    modern_ui_intro_title: str  # 引导提示标题
+    modern_ui_intro_message: str  # 引导提示内容
     
     # 其他
     please_connect_device: str
@@ -276,6 +283,19 @@ LANGUAGES: Dict[LanguageCode, Strings] = {
         task_paused="任务已暂停",
         log_task_paused="任务已暂停",
         log_task_resumed="任务已继续",
+        
+        # Modern UI 界面
+        switch_to_classic_ui="切换到经典界面",
+        switch_layout_direction="切换布局方向",
+        new_session="新建会话",
+        thinking_process="思考过程",
+        switch_to_modern_ui="🔄 切换到现代界面 (ChatGPT风格)",
+        modern_ui_intro_title="新界面提示",
+        modern_ui_intro_message=(
+            "OMG-Agent 现在提供了新的ChatGPT风格界面。\n\n"
+            "您可以通过菜单栏的【视图】→【切换到现代界面】来尝试新界面。\n"
+            "随时可以切换回经典界面。"
+        ),
 
         # 其他
         please_connect_device="请先连接设备",
@@ -402,6 +422,19 @@ LANGUAGES: Dict[LanguageCode, Strings] = {
         task_paused="Task Paused",
         log_task_paused="Task paused",
         log_task_resumed="Task resumed",
+        
+        # Modern UI
+        switch_to_classic_ui="Switch to Classic UI",
+        switch_layout_direction="Switch Layout Direction",
+        new_session="New Session",
+        thinking_process="Thinking Process",
+        switch_to_modern_ui="🔄 Switch to Modern UI (ChatGPT Style)",
+        modern_ui_intro_title="New UI Available",
+        modern_ui_intro_message=(
+            "OMG-Agent now offers a new ChatGPT-style interface.\n\n"
+            "You can try it via menu: View → Switch to Modern UI.\n"
+            "You can switch back anytime."
+        ),
 
         # Other
         please_connect_device="Please connect a device first",

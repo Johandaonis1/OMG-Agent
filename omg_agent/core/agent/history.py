@@ -24,6 +24,8 @@ class HistoryEntry:
     action: Action
     observation: str  # The screen info/text user saw
     screenshot_base64: str | None = None
+    raw_thinking: str | None = None
+    raw_action: str | None = None
     timestamp: datetime = field(default_factory=datetime.now)
     user_reply: str | None = None  # Reply to INFO action
     sub_task_id: int | None = None  # Which sub-task this step belongs to
@@ -37,6 +39,7 @@ class ConversationHistory:
     entries: list[HistoryEntry] = field(default_factory=list)
     qa_history: list[tuple[str, str]] = field(default_factory=list)  # (question, answer) pairs
     task_plan: TaskPlan | None = None  # Task decomposition plan
+    output_format: str = "autoglm"  # 'autoglm' or 'step' - for history formatting
 
     @property
     def step_count(self) -> int:
@@ -48,19 +51,23 @@ class ConversationHistory:
         action: Action,
         observation: str,
         screenshot_base64: str | None = None,
-        user_reply: str | None = None
+        user_reply: str | None = None,
+        raw_thinking: str | None = None,
+        raw_action: str | None = None,
     ) -> None:
         """Add new history entry."""
         sub_task_id = None
         if self.task_plan and self.task_plan.current_sub_task:
             sub_task_id = self.task_plan.current_sub_task.id
-        
+
         entry = HistoryEntry(
             step=self.step_count + 1,
             action=action,
             observation=observation,
             screenshot_base64=screenshot_base64,
             user_reply=user_reply,
+            raw_thinking=raw_thinking,
+            raw_action=raw_action,
             sub_task_id=sub_task_id
         )
         self.entries.append(entry)
@@ -74,25 +81,126 @@ class ConversationHistory:
         """Get last n actions."""
         return [e.action for e in self.entries[-n:]]
 
+    def _format_action_for_history(self, action: Action) -> str:
+        """Format action in the native model format for history replay."""
+        if self.output_format == "step":
+            # Tab-separated format for StepGUI
+            return self._format_action_step(action)
+        else:
+            # Function call format for AutoGLM
+            return self._format_action_autoglm(action)
+
+    def _format_action_autoglm(self, action: Action) -> str:
+        """Format action in AutoGLM function call style."""
+        params = action.params.copy()
+
+        # Handle finish/complete
+        if action.action_type == ActionType.COMPLETE:
+            msg = params.get("return", "任务已完成")
+            return f'finish(message="{msg}")'
+
+        if action.action_type == ActionType.ABORT:
+            msg = params.get("value", "任务终止")
+            return f'finish(message="终止: {msg}")'
+
+        # Map action types to AutoGLM names
+        action_name_map = {
+            ActionType.CLICK: "Tap",
+            ActionType.DOUBLE_TAP: "Double Tap",
+            ActionType.LONG_PRESS: "Long Press",
+            ActionType.SWIPE: "Swipe",
+            ActionType.TYPE: "Type",
+            ActionType.BACK: "Back",
+            ActionType.HOME: "Home",
+            ActionType.LAUNCH: "Launch",
+            ActionType.WAIT: "Wait",
+            ActionType.INFO: "Interact",
+            ActionType.TAKE_OVER: "Take_over",
+            ActionType.NOTE: "Note",
+        }
+
+        action_name = action_name_map.get(action.action_type, action.action_type.value)
+        param_parts = [f'action="{action_name}"']
+
+        # Add parameters based on action type
+        if "point" in params:
+            param_parts.append(f'element={params["point"]}')
+        if "point1" in params:
+            param_parts.append(f'start={params["point1"]}')
+        if "point2" in params:
+            param_parts.append(f'end={params["point2"]}')
+        if "value" in params:
+            if action.action_type == ActionType.TYPE:
+                param_parts.append(f'text="{params["value"]}"')
+            elif action.action_type == ActionType.LAUNCH:
+                param_parts.append(f'app="{params["value"]}"')
+            elif action.action_type == ActionType.WAIT:
+                param_parts.append(f'duration="{params["value"]} seconds"')
+            else:
+                param_parts.append(f'message="{params["value"]}"')
+
+        return f'do({", ".join(param_parts)})'
+
+    def _format_action_step(self, action: Action) -> str:
+        """Format action in StepGUI tab-separated style."""
+        params = action.params.copy()
+        parts = []
+
+        # Handle completion
+        if action.action_type == ActionType.COMPLETE:
+            return f"action:COMPLETE\treturn:{params.get('return', '任务已完成')}"
+
+        if action.action_type == ActionType.ABORT:
+            return f"action:ABORT\tvalue:{params.get('value', '任务终止')}"
+
+        # Map action types
+        action_name_map = {
+            ActionType.CLICK: "CLICK",
+            ActionType.SWIPE: "SLIDE",
+            ActionType.TYPE: "TYPE",
+            ActionType.BACK: "BACK",
+            ActionType.HOME: "HOME",
+            ActionType.LAUNCH: "AWAKE",
+            ActionType.WAIT: "WAIT",
+            ActionType.INFO: "INFO",
+            ActionType.LONG_PRESS: "LONGPRESS",
+        }
+
+        action_name = action_name_map.get(action.action_type, action.action_type.value)
+        parts.append(f"action:{action_name}")
+
+        # Add parameters
+        if "point" in params:
+            p = params["point"]
+            parts.append(f"point:{p[0]},{p[1]}")
+        if "point1" in params and "point2" in params:
+            p1, p2 = params["point1"], params["point2"]
+            parts.append(f"point1:{p1[0]},{p1[1]}")
+            parts.append(f"point2:{p2[0]},{p2[1]}")
+        if "value" in params:
+            parts.append(f"value:{params['value']}")
+
+        return "\t".join(parts)
+
     def to_messages(self, max_history: int = 10) -> list[dict[str, Any]]:
         """
         Convert history to list of messages for LLM.
-        
+
         Structure:
         User: Task + (Summary if truncated)
         User: Step 1 Observation (Image removed)
-        Assistant: Step 1 Action
+        Assistant: Step 1 Action (in native format)
         ...
         User: Step N Observation (Image removed)
-        Assistant: Step N Action
+        Assistant: Step N Action (in native format)
         """
         from .llm import MessageBuilder
 
         messages = []
-        
+
         # Determine start index for history
         start_idx = max(0, len(self.entries) - max_history)
-        
+
         for i, entry in enumerate(self.entries[start_idx:]):
             # User Message (Observation)
             content = entry.observation
@@ -106,20 +214,28 @@ class ConversationHistory:
                 image_base64=None  # Old history has no image
             ))
 
-            # Assistant Message (Action)
+            # Assistant Message (Action in native format)
             assistant_content = ""
             if entry.action.thinking:
-                assistant_content += f"<think>{entry.action.thinking}</think>\n"
-            
-            # Minimal action representation
-            action_dict = entry.action.to_dict()
-            if "thinking" in action_dict:
-                del action_dict["thinking"]
-            
-            import json
-            action_json = json.dumps(action_dict, ensure_ascii=False)
-            assistant_content += f"```json\n{action_json}\n```"
-            
+                if self.output_format == "step":
+                    assistant_content += f"<THINK>{entry.action.thinking}</THINK>\n"
+                else:
+                    assistant_content += f"<think>{entry.action.thinking}</think>\n"
+
+            # Use native format instead of JSON
+            if self.output_format == "step":
+                # StepGUI format
+                action_str = self._format_action_step(entry.action)
+                if entry.action.explanation:
+                    action_str = f"explain:{entry.action.explanation}\t{action_str}"
+                if entry.action.summary:
+                    action_str += f"\tsummary:{entry.action.summary}"
+                assistant_content += action_str
+            else:
+                # AutoGLM format
+                action_str = self._format_action_autoglm(entry.action)
+                assistant_content += f"<answer>{action_str}</answer>"
+
             messages.append(MessageBuilder.create_assistant_message(assistant_content))
 
             # Add user reply if this step had one (After the action)
@@ -127,64 +243,46 @@ class ConversationHistory:
                 messages.append(MessageBuilder.create_user_message(
                     text=f"User Reply: {entry.user_reply}"
                 ))
-            
+
         return messages
 
 
 class LoopDetector:
     """Detects and prevents repetitive action loops."""
-    
+
     def __init__(
         self,
-        max_consecutive_same: int = 3,
-        max_consecutive_swipes: int = 5,
-        max_click_same_point: int = 3,
+        max_consecutive_same: int = 5,  # 放宽阈值
+        max_consecutive_swipes: int = 15,  # 官方允许更多滑动
+        max_click_same_point: int = 5,  # 放宽阈值
         point_tolerance: int = 50  # Tolerance for "same" point (in 0-1000 coords)
     ):
         self.max_consecutive_same = max_consecutive_same
         self.max_consecutive_swipes = max_consecutive_swipes
         self.max_click_same_point = max_click_same_point
         self.point_tolerance = point_tolerance
-    
+
     def check_loop(self, entries: list[HistoryEntry]) -> tuple[bool, str]:
         """
         Check if we're in a loop pattern.
-        
+
         Returns:
             Tuple of (is_looping, warning_message)
         """
-        if len(entries) < 2:
+        if len(entries) < 3:
             return False, ""
-        
-        # Check 1: Consecutive same action type
-        recent = entries[-self.max_consecutive_same:]
-        if len(recent) >= self.max_consecutive_same:
-            action_types = [e.action.action_type for e in recent]
-            if len(set(action_types)) == 1:
-                # All same action type
-                if action_types[0] == ActionType.SWIPE:
-                    if len(entries) >= self.max_consecutive_swipes:
-                        swipe_count = sum(
-                            1 for e in entries[-self.max_consecutive_swipes:]
-                            if e.action.action_type == ActionType.SWIPE
-                        )
-                        if swipe_count >= self.max_consecutive_swipes:
-                            return True, f"连续滑动 {swipe_count} 次，请尝试其他方法（如搜索、返回）"
-                elif action_types[0] == ActionType.CLICK:
-                    # Check if clicking same point
-                    points = [e.action.params.get("point") for e in recent if e.action.params.get("point")]
-                    if len(points) >= self.max_click_same_point and self._are_points_similar(points):
-                        return True, "多次点击同一位置无效，UI 可能没有响应，请尝试不同位置或操作"
-        
-        # Check 2: Alternating pattern (A-B-A-B loop)
-        if len(entries) >= 4:
-            last_four = [e.action.action_type for e in entries[-4:]]
-            if last_four[0] == last_four[2] and last_four[1] == last_four[3] and last_four[0] != last_four[1]:
-                return True, f"检测到 {last_four[0].value}-{last_four[1].value} 交替循环，请换一种方法"
-        
-        # Check 3: Exact same action repeated (including params)
-        if len(entries) >= 2:
+
+        # 只检测严重的循环（完全相同的操作重复多次）
+        # 滑动操作不算循环，因为滑动查找是正常行为
+
+        # Check: Exact same action repeated (including params) - 但排除滑动
+        if len(entries) >= 3:
             last_action = entries[-1].action
+
+            # 滑动是正常行为，不检测
+            if last_action.action_type == ActionType.SWIPE:
+                return False, ""
+
             prev_action = entries[-2].action
             if self._actions_identical(last_action, prev_action):
                 # Check how many times this exact action was repeated
@@ -195,8 +293,8 @@ class LoopDetector:
                     else:
                         break
                 if repeat_count >= self.max_consecutive_same:
-                    return True, f"完全相同的操作重复了 {repeat_count} 次，请尝试其他方法"
-        
+                    return True, f"完全相同的操作重复了 {repeat_count} 次"
+
         return False, ""
     
     def _are_points_similar(self, points: list) -> bool:
@@ -246,7 +344,7 @@ class LoopDetector:
 class HistoryManager:
     """
     Manages conversation history with robust context handling and loop detection.
-    
+
     Includes:
     - Chat-based history for multi-turn context
     - Loop detection and prevention
@@ -257,7 +355,8 @@ class HistoryManager:
     def __init__(
         self,
         max_history_steps: int = 8,  # Reduced for efficiency
-        use_task_planning: bool = True
+        use_task_planning: bool = False,  # Default to False for official protocol compatibility
+        output_format: str = "autoglm"  # 'autoglm' or 'step'
     ):
         """
         Initialize history manager.
@@ -265,28 +364,39 @@ class HistoryManager:
         Args:
             max_history_steps: Max number of past steps to include in context
             use_task_planning: Whether to use task planning for complex tasks
+                NOTE: Set to False when using official AutoGLM/gelab-zero protocols
+                to ensure 100% compatibility with official implementation.
+            output_format: Format for history messages ('autoglm' or 'step')
         """
         self.max_history_steps = max_history_steps
         self.use_task_planning = use_task_planning
+        self.output_format = output_format
         self._history: ConversationHistory | None = None
         self.loop_detector = LoopDetector()
 
-    def start_task(self, task: str, llm_client: Any = None) -> TaskPlan | None:
+    def start_task(self, task: str, llm_client: Any = None, output_format: str | None = None) -> TaskPlan | None:
         """
         Start tracking a new task.
-        
+
+        Args:
+            task: The task description
+            llm_client: Optional LLM client for complex task planning
+            output_format: Override output format ('autoglm' or 'step')
+
         Returns:
             TaskPlan if planning was used, None otherwise
         """
-        self._history = ConversationHistory(task=task)
-        
+        # Use provided format or default
+        fmt = output_format or self.output_format
+        self._history = ConversationHistory(task=task, output_format=fmt)
+
         # Analyze task complexity and create plan if needed
         if self.use_task_planning:
             complexity = analyze_task_complexity(task)
             if complexity["is_complex"]:
                 # Use LLM for complex tasks if available
                 plan = TaskPlanner.create_plan(
-                    task, 
+                    task,
                     use_llm=(llm_client is not None),
                     llm_client=llm_client
                 )
@@ -295,20 +405,35 @@ class HistoryManager:
                 if plan.sub_tasks:
                     plan.sub_tasks[0].status = TaskStatus.IN_PROGRESS
                 return plan
-        
+
         return None
+
+    def set_output_format(self, fmt: str) -> None:
+        """Set output format for history formatting."""
+        self.output_format = fmt
+        if self._history:
+            self._history.output_format = fmt
 
     def add_action(
         self,
         action: Action,
         observation: str,
         screenshot_base64: str | None = None,
-        user_reply: str | None = None
+        user_reply: str | None = None,
+        raw_thinking: str | None = None,
+        raw_action: str | None = None,
     ) -> None:
         """Record an action."""
         if self._history is None:
             raise RuntimeError("No task started. Call start_task() first.")
-        self._history.add_entry(action, observation, screenshot_base64, user_reply)
+        self._history.add_entry(
+            action=action,
+            observation=observation,
+            screenshot_base64=screenshot_base64,
+            user_reply=user_reply,
+            raw_thinking=raw_thinking,
+            raw_action=raw_action,
+        )
     
     def advance_sub_task(self) -> bool:
         """
@@ -430,67 +555,110 @@ class HistoryManager:
     ) -> list[dict[str, Any]]:
         """
         Build messages for LLM context.
-        
+        与官方Open-AutoGLM 100%一致的消息格式。
+
         Structure:
-        1. System Message
-        2. History Messages (User/Assistant chain without images) - limited
-        3. Current User Message (Task Plan + History Summary + Observation + Image)
+        1. System Message (prompt)
+        2. [First Step] User: task + screen_info + screenshot
+        3. [First Step] Assistant: <think>...</think><answer>...</answer>
+        4. [Step N] User: screen_info + screenshot (image removed after response)
+        5. [Step N] Assistant: <think>...</think><answer>...</answer>
+        6. [Current] User: screen_info + screenshot
         """
+        import json
         from .llm import MessageBuilder
 
+        # Special handling for Gelab/Step Protocol (Single Turn with Summary)
+        if self.output_format == "step":
+            # Gelab-Zero logic: Everything is in one User message
+            user_content = []
+            
+            # 1. Task Definition (System Prompt)
+            # Gelab includes the definition in the user message
+            user_content.append({"type": "text", "text": system_prompt})
+            
+            # 2. Status & History Summary
+            summary_history = "暂无历史操作"
+            if self._history and self._history.entries:
+                last_entry = self._history.entries[-1]
+                if last_entry.action.summary:
+                    summary_history = last_entry.action.summary
+            
+            status_text = f"已知用户指令为：{self.task}\n已知已经执行过的历史动作如下：{summary_history}\n当前手机屏幕截图如下：\n"
+            user_content.append({"type": "text", "text": status_text})
+            
+            # 3. Current Screenshot
+            user_content.append({"type": "image_url", "image_url": {"url": current_screenshot_b64}})
+            
+            # 4. Post-Image Instruction
+            post_text = """
+在执行操作之前，请务必回顾你的历史操作记录和限定的动作空间，先进行思考和解释然后输出动作空间和对应的参数：
+1. 思考（THINK）：在 <THINK> 和 </THINK> 标签之间。
+2. 解释（explain）：在动作格式中，使用 explain: 开头，简要说明当前动作的目的和执行方式。
+3. 总结（summary）：在动作格式中，使用 summary: 开头，更新当前步骤后的历史总结。
+在执行完操作后，请输出执行完当前步骤后的新历史总结。
+输出格式示例：
+<THINK> 思考的内容 </THINK>
+explain:解释的内容\taction:动作空间和对应的参数\tsummary:执行完当前步骤后的新历史总结
+"""
+            user_content.append({"type": "text", "text": post_text})
+            
+            return [{"role": "user", "content": user_content}]
+
+        # Standard AutoGLM Logic (Multi-turn Chat)
         messages = []
 
         # 1. System Message
         messages.append(MessageBuilder.create_system_message(system_prompt))
 
-        # 2. History Messages - only include recent ones for efficiency
+        # 2. 历史消息 - 与官方格式一致
         if self._history and self._history.entries:
-            # Only include last few complete turns
-            history_msgs = self._history.to_messages(self.max_history_steps)
-            messages.extend(history_msgs)
+            for i, entry in enumerate(self._history.entries):
+                # User Message (Observation) - 图片已移除
+                if i == 0:
+                    # 第一步包含任务
+                    screen_info = json.dumps({"current_app": entry.observation}, ensure_ascii=False)
+                    text_content = f"{self.task}\n\n{screen_info}"
+                else:
+                    # 后续步骤
+                    screen_info = json.dumps({"current_app": entry.observation}, ensure_ascii=False)
+                    text_content = f"** Screen Info **\n\n{screen_info}"
 
-        # 3. Current User Message
-        current_text = ""
-        
-        # 3a. Task and Plan
-        if lang == "zh":
-            current_text += f"## 用户任务\n{self.task}\n\n"
-        else:
-            current_text += f"## User Task\n{self.task}\n\n"
-        
-        # 3b. Task Plan (if available)
-        if self._history and self._history.task_plan:
-            current_text += self._history.task_plan.to_prompt(lang)
-            current_text += "\n\n"
-        
-        # 3c. Action History Summary
-        action_summary = self.get_action_summary_for_prompt(lang)
-        if action_summary:
-            current_text += f"{action_summary}\n\n"
-        
-        # 3d. Current Screen Info
-        screen_info = ""
+                # 历史消息不包含图片（已移除）
+                messages.append({"role": "user", "content": [{"type": "text", "text": text_content}]})
+
+                # Assistant Message - 与官方 Open-AutoGLM 格式一致
+                thinking = entry.raw_thinking if entry.raw_thinking is not None else (entry.action.thinking or "")
+                
+                if self.output_format == "step":
+                    # Fallback if step used in chat mode (shouldn't happen with above if)
+                    action_str = self._history._format_action_step(entry.action)
+                    if thinking:
+                        assistant_content = f"<THINK>{thinking}</THINK>\n{action_str}"
+                    else:
+                        assistant_content = action_str
+                else:
+                    # AutoGLM: always include <think> and no extra newline (matches phone_agent/agent.py)
+                    action_str = entry.raw_action if entry.raw_action is not None else self._history._format_action_autoglm(entry.action)
+                    assistant_content = f"<think>{thinking}</think><answer>{action_str}</answer>"
+
+                messages.append(MessageBuilder.create_assistant_message(assistant_content))
+
+        # 3. 当前步骤的User消息（包含截图）
         if current_app:
-            screen_info = MessageBuilder.build_screen_info(current_app)
-        
-        if lang == "zh":
-            current_text += f"## 当前屏幕状态\n{screen_info}\n\n"
-            
-            # Add strong reminder about task completion
-            if self._history and self._history.task_plan:
-                if not self._history.task_plan.is_complete:
-                    current_sub = self._history.task_plan.current_sub_task
-                    if current_sub:
-                        current_text += f"**当前目标**: {current_sub.description}\n"
-                    current_text += "**请继续执行任务，只有所有步骤完成后才能使用 finish！**"
-            else:
-                current_text += "**请分析屏幕并继续执行任务。只有任务完全完成才能使用 finish！**"
+            screen_info = json.dumps({"current_app": current_app.get("package", "unknown")}, ensure_ascii=False)
         else:
-            current_text += f"## Current Screen\n{screen_info}\n\n"
-            current_text += "**Analyze the screen and continue. Only use finish when task is FULLY complete!**"
+            screen_info = json.dumps({"current_app": "unknown"}, ensure_ascii=False)
+
+        if not self._history or not self._history.entries:
+            # 第一步
+            text_content = f"{self.task}\n\n{screen_info}"
+        else:
+            # 后续步骤
+            text_content = f"** Screen Info **\n\n{screen_info}"
 
         messages.append(MessageBuilder.create_user_message(
-            text=current_text,
+            text=text_content,
             image_base64=current_screenshot_b64
         ))
 

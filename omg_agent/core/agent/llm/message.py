@@ -1,5 +1,6 @@
 """Message builder utilities for LLM conversations."""
 
+import json
 from typing import Any
 
 
@@ -28,31 +29,24 @@ class MessageBuilder:
         Returns:
             Message dict
         """
+        # Match Open-AutoGLM `MessageBuilder.create_user_message` behavior:
+        # - Always returns list-based multi-modal content
+        # - Image first, then text
         content: list[dict[str, Any]] = []
 
-        if text:
-            content.append({"type": "text", "text": text})
-
         if image_base64:
-            # Detect format from header
-            if image_base64.startswith("/9j/"):
-                media_type = "image/jpeg"
-            else:
-                media_type = "image/png"
-
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{media_type};base64,{image_base64}"}
-            })
+            # Open-AutoGLM always uses PNG screenshots
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                }
+            )
         elif image_url:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": image_url}
-            })
+            content.append({"type": "image_url", "image_url": {"url": image_url}})
 
-        # If only text, return simple format
-        if len(content) == 1 and content[0]["type"] == "text":
-            return {"role": "user", "content": text}
+        if text is not None:
+            content.append({"type": "text", "text": text})
 
         return {"role": "user", "content": content}
 
@@ -63,32 +57,26 @@ class MessageBuilder:
 
     @staticmethod
     def build_screen_info(
-        current_app: dict[str, str] | None = None,
-        orientation: int = 0
+        current_app: dict[str, str] | str | None,
+        **extra_info: Any,
     ) -> str:
         """
-        Build screen info string.
-
-        Args:
-            current_app: Dict with 'package' and 'activity'
-            orientation: Screen orientation (0-3)
-
-        Returns:
-            Formatted screen info string
+        Build screen info string (Open-AutoGLM compatible JSON).
         """
-        parts = []
+        if current_app is None:
+            current_app_name = "unknown"
+        elif isinstance(current_app, str):
+            current_app_name = current_app
+        else:
+            current_app_name = (
+                current_app.get("package")
+                or current_app.get("packageName")
+                or current_app.get("app")
+                or "unknown"
+            )
 
-        if current_app:
-            package = current_app.get("package", "unknown")
-            activity = current_app.get("activity", "unknown")
-            parts.append(f"Current App: {package}")
-            if activity != "unknown":
-                parts.append(f"Activity: {activity}")
-
-        orientation_names = ["Portrait", "Landscape (Left)", "Portrait (Upside)", "Landscape (Right)"]
-        parts.append(f"Orientation: {orientation_names[orientation % 4]}")
-
-        return "\n".join(parts)
+        info = {"current_app": current_app_name, **extra_info}
+        return json.dumps(info, ensure_ascii=False)
 
     @staticmethod
     def remove_images_from_message(message: dict[str, Any]) -> dict[str, Any]:
@@ -101,27 +89,11 @@ class MessageBuilder:
         Returns:
             Message with images removed
         """
-        if isinstance(message.get("content"), str):
-            return message
-
-        content = message.get("content", [])
-        if not isinstance(content, list):
-            return message
-
-        # Keep only text content
-        new_content = []
-        for item in content:
-            if item.get("type") == "text":
-                new_content.append(item)
-            elif item.get("type") == "image_url":
-                # Replace with placeholder
-                new_content.append({"type": "text", "text": "[Screenshot]"})
-
-        # Simplify if only one text item
-        if len(new_content) == 1 and new_content[0]["type"] == "text":
-            return {"role": message["role"], "content": new_content[0]["text"]}
-
-        return {"role": message["role"], "content": new_content}
+        if isinstance(message.get("content"), list):
+            message["content"] = [
+                item for item in message["content"] if item.get("type") == "text"
+            ]
+        return message
 
     @staticmethod
     def build_task_prompt(
